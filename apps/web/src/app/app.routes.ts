@@ -31,5 +31,11 @@ export const routes: Routes = [
     loadComponent: () => import('./features/auth/signup').then((m) => m.Signup),
     title: 'Create account · Billiards',
   },
+  {
+    path: 'profile',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/profile/profile').then((m) => m.Profile),
+    title: 'Your profile · Billiards',
+  },
   { path: '**', redirectTo: '' },
 ];

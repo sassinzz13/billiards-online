@@ -117,6 +117,13 @@ Additional hard rules:
 
 Enforced by `tests/arch/boundaries_test.go`, which reads `go list -json ./...` and fails on violation.
 
+**A feature that needs to know "which user is making this request" but cannot import the feature
+that authenticates them defines its own minimal context carrier** (an unexported key type + small
+WithX/XFromContext pair) rather than importing upward. `internal/users` (L0) cannot import
+`internal/auth` (L1), so it owns `WithUserID`/`UserIDFromContext` in `context.go`; the composition
+root bridges `auth.Identity` into that shape with a small adapter middleware. See ADR 0001 and
+`internal/users/context.go`.
+
 ### How features talk to each other
 
 Consumer-side interfaces. The consumer declares the narrow interface it needs; the provider is a
@@ -502,6 +509,16 @@ Validated by `scripts/validate-asset.mjs`. Until an asset passes, use procedural
 
 ---
 
+**Gin middleware must be flat, never nested.** A `gin.HandlerFunc` returned by one middleware
+constructor (e.g. `authSvc.RequireAuth()`) calls `c.Next()` itself. `c.Next()` advances a **shared
+index across Gin's whole handler chain**, so invoking that returned func as a plain function call
+from *inside* another middleware makes its `c.Next()` run every later handler — including the real
+route handler — before the outer call resumes. The fix is to register both as separate entries in
+one `[]gin.HandlerFunc` passed to Gin, never to call one middleware's handler from within another's
+body. This cost real debugging time in Phase 3 (`internal/users`' auth bridge) and is now a
+regression test: `TestMultipleAuthMiddlewareChainInOrderNotNested` in
+`internal/users/handler_test.go`.
+
 ## 21a. Gotchas discovered the hard way
 
 Each of these cost real debugging time. They are here so they cost it once.
@@ -560,6 +577,8 @@ Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
 | — | Production domain: `billiards-online.duckdns.org` | 2026-08-14 |
 | — | Credentials in an auth-owned table, never a column on `users` — see §17 | 2026-08-14 |
 | — | `postgres.DB` interface + `pgtest` rollback harness for feature tests — see §21 | 2026-08-14 |
+| — | Profile split from `users` into its own table, created atomically alongside every account — see §15 | 2026-08-14 |
+| — | Cross-layer identity uses a feature-owned context carrier, not an upward import — see §5 | 2026-08-14 |
 
 ## 23. Known deviations from the constitution
 

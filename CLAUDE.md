@@ -67,14 +67,18 @@ public — confirm `.env` is untracked before pushing. See MEMORY.md §25a.
 
 ## Current state
 
-**Phases 0, 1, and 2 complete.** The stack runs and players can sign up, sign in, and sign out.
-`internal/users` (L0) owns identity; `internal/auth` (L1) owns credentials and sessions. 72 Go tests
-and 17 Angular tests pass.
+**Phases 0-3 complete.** Players can sign up, sign in, sign out, and view/edit their own profile.
+`internal/users` (L0) owns identity + profile; `internal/auth` (L1) owns credentials and sessions.
+91 Go tests and 26 Angular tests pass.
 
-**Phase 3 (users) is next** — profiles and the statistics shell that Phase 15 fills.
+**Phase 4 (lobby and rooms) is next.**
 
 Integration tests need a database: `make test-db` once, then `make test-integration`. Without
 `TEST_DATABASE_URL` they skip, which is why `make check` alone can look deceptively small.
+
+Two things worth reading before touching auth/users again: MEMORY.md §5 on how a lower-layer
+feature carries identity from a higher-layer one without an upward import, and §21a on why Gin
+middleware must be chained flat, never called from inside another middleware's body.
 
 Before writing feature code, read MEMORY.md §5 (layer table), §10a (routing), and §21a (gotchas
 that already cost debugging time once).

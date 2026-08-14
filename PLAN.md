@@ -9,7 +9,7 @@ file exists is worse than no box at all — it makes this document lie.
 Companion files: [MEMORY.md](MEMORY.md) (conventions and constants), [CLAUDE.md](CLAUDE.md) (session
 rules), [docs/adr/](docs/adr/) (decision rationale).
 
-Last updated: 2026-08-14 (Phase 2 complete)
+Last updated: 2026-08-14 (Phase 3 complete)
 
 ---
 
@@ -20,8 +20,8 @@ Last updated: 2026-08-14 (Phase 2 complete)
 | 0 | Architecture | ✅ Complete |
 | 1 | Development infrastructure | ✅ Complete |
 | 2 | Authentication | ✅ Complete |
-| 3 | Users | 🔜 Next |
-| 4 | Lobby and rooms | ⬜ |
+| 3 | Users | ✅ Complete |
+| 4 | Lobby and rooms | 🔜 Next |
 | 5 | WebSocket foundation | ⬜ |
 | 6 | Match lifecycle | ⬜ |
 | 7 | Physics prototype | ⬜ |
@@ -181,13 +181,13 @@ auth owns the secret, so no query in `internal/users` can return a password hash
 
 **Owns:** `internal/users` (L0) · tables `users`, `player_profiles`
 
-- [ ] Migration: `users`, `player_profiles` (display name, avatar ref, created_at)
-- [ ] Migration: statistics columns — matches played, wins, losses (structure only, not maintained yet)
-- [ ] `GET /api/v1/users/me`, `PATCH /api/v1/users/me`
-- [ ] `GET /api/v1/users/:id` — public projection only
-- [ ] Unique constraint on handle, case-insensitive
-- [ ] Angular `features/profile`
-- [ ] Tests: fetch, update, **authorization — user A cannot modify user B**, handle uniqueness
+- [x] Migration: `player_profiles` (display name, avatar ref, created_at) — `users` itself landed in Phase 2
+- [x] Migration: statistics columns — matches played, wins, losses (structure only, not maintained yet)
+- [x] `GET /api/v1/users/me`, `PATCH /api/v1/users/me`
+- [x] `GET /api/v1/users/:id` — public projection only
+- [x] Unique constraint on handle, case-insensitive
+- [x] Angular `features/profile`
+- [x] Tests: fetch, update, **authorization — user A cannot modify user B**, handle uniqueness
 
 ---
 

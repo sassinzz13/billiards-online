@@ -85,8 +85,23 @@ func run() error {
 	authSvc := auth.NewService(pool, usersSvc)
 	authHandler := auth.NewHandler(authSvc, cfg.Env.IsProduction(), authLimiter)
 
+	// users (L0) cannot import auth (L1) to read its Identity type, so this bridge does the
+	// translation here in the composition root — the one place allowed to know about both. It runs
+	// as a second, ordinary link in Gin's middleware chain, after auth.RequireAuth — not nested
+	// inside it. RequireAuth's handler calls c.Next() itself; invoking it as a plain function call
+	// from inside another middleware would let that c.Next() run the rest of the chain, including
+	// the route handler, before this bridge had a chance to attach the ID. See
+	// internal/users/routes.go for the longer version of this warning.
+	bridgeIdentityToUsers := func(c *gin.Context) {
+		if identity, ok := auth.IdentityFrom(c.Request.Context()); ok {
+			c.Request = c.Request.WithContext(users.WithUserID(c.Request.Context(), identity.UserID))
+		}
+		c.Next()
+	}
+	usersHandler := users.NewHandler(usersSvc, authSvc.RequireAuth(), bridgeIdentityToUsers)
+
 	public := &http.Server{
-		Handler:           newRouter(cfg, logger, pool, authHandler),
+		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler),
 		Addr:              cfg.HTTP.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -159,7 +174,7 @@ func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog
 // Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
 // Each feature registers its own routes through its handler, so route ownership stays with the
 // feature that implements them rather than accumulating in a central router file.
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler) http.Handler {
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler) http.Handler {
 	if cfg.Env.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -207,6 +222,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, auth
 	})
 
 	authHandler.RegisterRoutes(v1)
+	usersHandler.RegisterRoutes(v1)
 
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 import { AuthService } from '../../core/auth/auth.service';
 import { ApiClient } from '../../core/networking/api-client';
@@ -19,6 +19,7 @@ type Probe = { state: 'checking' } | { state: 'up'; detail: string } | { state: 
  */
 @Component({
   selector: 'app-status',
+  imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <main>
@@ -30,6 +31,7 @@ type Probe = { state: 'checking' } | { state: 'up'; detail: string } | { state: 
         @if (account(); as player) {
           <div class="account">
             <span class="handle">{{ player.handle }}</span>
+            <a class="link" routerLink="/profile">Profile</a>
             <button type="button" class="link" (click)="signOut()" [disabled]="signingOut()">
               {{ signingOut() ? 'Signing out…' : 'Sign out' }}
             </button>
@@ -51,7 +53,7 @@ type Probe = { state: 'checking' } | { state: 'up'; detail: string } | { state: 
         Re-check
       </button>
 
-      <p class="phase">Phase 2 — authentication. No gameplay yet.</p>
+      <p class="phase">Phase 3 — users. No gameplay yet.</p>
     </main>
   `,
   styles: `

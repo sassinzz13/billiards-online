@@ -3,8 +3,10 @@ package users
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/sassinzz13/billiards-online/platform/postgres"
 )
@@ -33,11 +35,16 @@ func (s *Service) WithDB(db postgres.DB) *Service {
 	return &Service{db: db}
 }
 
-// Create registers an account.
+// Create registers an account and its profile.
 //
 // Uniqueness is enforced by the database, not by a prior existence check: two concurrent signups
 // for the same address would both pass such a check. ErrEmailTaken and ErrHandleTaken come from
 // translating the constraint violation.
+//
+// The user row and its profile row are inserted in one transaction, so "every user has a profile"
+// holds unconditionally rather than as a rule a future call site has to remember. Wrapping in
+// postgres.InTx is correct even when s.db is already a transaction — from auth.Signup via WithDB —
+// because pgx turns the nested Begin into a SAVEPOINT.
 func (s *Service) Create(ctx context.Context, email, handle string) (User, error) {
 	email = NormalizeEmail(email)
 	if err := ValidateEmail(email); err != nil {
@@ -54,7 +61,18 @@ func (s *Service) Create(ctx context.Context, email, handle string) (User, error
 		return User{}, fmt.Errorf("generate user id: %w", err)
 	}
 
-	return insertUser(ctx, s.db, id, email, handle)
+	var user User
+	err = postgres.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		user, err = insertUser(ctx, tx, id, email, handle)
+		if err != nil {
+			return err
+		}
+		return insertProfile(ctx, tx, user.ID)
+	})
+	if err != nil {
+		return User{}, err
+	}
+	return user, nil
 }
 
 // ByID returns an account, or ErrNotFound.
@@ -66,4 +84,55 @@ func (s *Service) ByID(ctx context.Context, id uuid.UUID) (User, error) {
 // lookup matches however the caller cased it.
 func (s *Service) ByEmail(ctx context.Context, email string) (User, error) {
 	return selectUser(ctx, s.db, qUserByEmail, NormalizeEmail(email))
+}
+
+// Account returns the full record — identity plus profile, including email — for the account's own
+// owner. Never call this to answer "what does player X look like to player Y"; that is Public.
+func (s *Service) Account(ctx context.Context, id uuid.UUID) (Account, error) {
+	return selectAccount(ctx, s.db, id)
+}
+
+// Public returns the projection safe to show to other players: no email.
+func (s *Service) Public(ctx context.Context, id uuid.UUID) (PublicProfile, error) {
+	return selectPublicProfile(ctx, s.db, id)
+}
+
+// UpdateProfile applies a tri-state edit to the caller's own profile and returns the resulting
+// Account.
+//
+// There is deliberately no way to name a different user here — id always comes from the
+// authenticated session at the call site (internal/auth's RequireAuth), never from a request body
+// or path parameter. That is what makes "user A cannot edit user B" true by construction rather
+// than by a check that could be forgotten (§13, exit criterion of Phase 3).
+func (s *Service) UpdateProfile(ctx context.Context, id uuid.UUID, in UpdateProfileInput) (Account, error) {
+	displayName, err := normalizeTriState(in.DisplayName, ValidateDisplayName)
+	if err != nil {
+		return Account{}, err
+	}
+	avatarRef, err := normalizeTriState(in.AvatarRef, ValidateAvatarRef)
+	if err != nil {
+		return Account{}, err
+	}
+
+	if err := updateProfile(ctx, s.db, id, displayName, avatarRef); err != nil {
+		return Account{}, err
+	}
+	return s.Account(ctx, id)
+}
+
+// normalizeTriState trims a touched field and validates it unless the trimmed result is empty, in
+// which case empty is passed through as the "clear this field" signal the repository expects. An
+// untouched (nil) field passes straight through.
+func normalizeTriState(v *string, validate func(string) error) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if trimmed == "" {
+		return &trimmed, nil
+	}
+	if err := validate(trimmed); err != nil {
+		return nil, err
+	}
+	return &trimmed, nil
 }
