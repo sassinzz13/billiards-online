@@ -14,10 +14,33 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sassinzz13/billiards-online/platform/config"
 )
+
+// DB is anything SQL can be run against. Both *pgxpool.Pool and pgx.Tx satisfy it.
+//
+// Feature repositories take a DB rather than a concrete *pgxpool.Pool for two reasons:
+//
+//   - An operation that must be atomic can pass the transaction straight down, so the same
+//     repository method works inside and outside a transaction with no duplicate code path.
+//   - Tests can hand a repository a transaction and roll it back afterwards, which is what keeps
+//     integration tests isolated without truncating tables between them.
+//
+// This is a genuine boundary rather than an interface added out of habit (§64). It is deliberately
+// the smallest set of methods that satisfies both: adding to it makes the test harness harder, not
+// easier.
+//
+// Begin is included because pgx.Tx.Begin opens a SAVEPOINT rather than a nested transaction, so a
+// service that manages its own transaction still composes correctly under a test-owned one.
+type DB interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // Connect opens the pool and verifies it can actually reach the database.
 //
@@ -63,18 +86,15 @@ func Health(ctx context.Context, pool *pgxpool.Pool) error {
 // Transactions must stay short. Never hold one across a match, a shot, or a network round trip:
 // see §37 and MEMORY.md §15.
 //
-//	err := postgres.InTx(ctx, pool, func(tx pgx.Tx) error {
+//	err := postgres.InTx(ctx, db, func(tx pgx.Tx) error {
 //	    // ... several statements that must succeed or fail together
 //	    return nil
 //	})
-func InTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
-	return InTxOptions(ctx, pool, pgx.TxOptions{}, fn)
-}
-
-// InTxOptions is InTx with explicit transaction options, for the rare operation that needs a
-// stricter isolation level than the default.
-func InTxOptions(ctx context.Context, pool *pgxpool.Pool, opts pgx.TxOptions, fn func(pgx.Tx) error) (err error) {
-	tx, err := pool.BeginTx(ctx, opts)
+//
+// Nesting is safe: if db is already a transaction, pgx opens a SAVEPOINT, so a service that manages
+// its own transaction still works when a test wraps it in one.
+func InTx(ctx context.Context, db DB, fn func(pgx.Tx) error) (err error) {
+	tx, err := db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

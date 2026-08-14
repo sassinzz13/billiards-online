@@ -58,13 +58,23 @@ make test-game   # go test ./game/...  — must pass with no DB, no Docker, no n
 make web-test    # ng test  (NOT npx vitest)
 ```
 
+## Pushing
+
+Remote is `https://github.com/sassinzz13/billiards-online` (public), branch `main`. **Push after
+every completed phase**, one commit per phase. A phase is pushable only when its PLAN.md checklist
+is fully ticked, `make check` is green, and its exit criterion is demonstrably met. The repo is
+public — confirm `.env` is untracked before pushing. See MEMORY.md §25a.
+
 ## Current state
 
-**Phases 0 and 1 complete.** The stack runs: `make up` gives traefik + web + server + postgres, all
-healthy, with the Angular shell reaching the API through Traefik and the API reaching PostgreSQL.
+**Phases 0, 1, and 2 complete.** The stack runs and players can sign up, sign in, and sign out.
+`internal/users` (L0) owns identity; `internal/auth` (L1) owns credentials and sessions. 72 Go tests
+and 17 Angular tests pass.
 
-**Phase 2 (authentication) is next.** It adds the first migration, `internal/auth`, Argon2id
-hashing, and the session cookie described in ADR 0009.
+**Phase 3 (users) is next** — profiles and the statistics shell that Phase 15 fills.
+
+Integration tests need a database: `make test-db` once, then `make test-integration`. Without
+`TEST_DATABASE_URL` they skip, which is why `make check` alone can look deceptively small.
 
 Before writing feature code, read MEMORY.md §5 (layer table), §10a (routing), and §21a (gotchas
 that already cost debugging time once).

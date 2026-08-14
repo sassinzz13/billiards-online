@@ -9,7 +9,7 @@ file exists is worse than no box at all — it makes this document lie.
 Companion files: [MEMORY.md](MEMORY.md) (conventions and constants), [CLAUDE.md](CLAUDE.md) (session
 rules), [docs/adr/](docs/adr/) (decision rationale).
 
-Last updated: 2026-08-14 (Phase 1 complete)
+Last updated: 2026-08-14 (Phase 2 complete)
 
 ---
 
@@ -19,8 +19,8 @@ Last updated: 2026-08-14 (Phase 1 complete)
 |---|---|---|
 | 0 | Architecture | ✅ Complete |
 | 1 | Development infrastructure | ✅ Complete |
-| 2 | Authentication | 🔜 Next |
-| 3 | Users | ⬜ |
+| 2 | Authentication | ✅ Complete |
+| 3 | Users | 🔜 Next |
 | 4 | Lobby and rooms | ⬜ |
 | 5 | WebSocket foundation | ⬜ |
 | 6 | Match lifecycle | ⬜ |
@@ -149,21 +149,27 @@ deviation from the constitution is called out explicitly rather than applied sil
 **Exit criterion:** an unauthenticated request to a protected endpoint is rejected, and a session can
 be revoked server-side and immediately stops working.
 
-**Owns:** `internal/auth` (L1) · table `sessions`
+**Owns:** `internal/auth` (L1) · tables `credentials`, `sessions`
 
-- [ ] Migration: `sessions` (id UUIDv7, user_id, token_hash, expires_at, created_at, revoked_at)
-- [ ] `platform/security/argon2.go` — Argon2id `t=3, m=64MiB, p=4`, 16-byte salt
-- [ ] `POST /api/v1/auth/signup`
-- [ ] `POST /api/v1/auth/login` — sets `HttpOnly; Secure; SameSite=Lax` cookie
-- [ ] `POST /api/v1/auth/logout` — revokes the session row
-- [ ] `GET  /api/v1/auth/session` — current user
-- [ ] Auth middleware: cookie → SHA-256 → session lookup → bind userID to `context.Context`
-- [ ] Rate limiting on login and signup (§59)
-- [ ] Angular `features/auth` — signup and login forms (Signal Forms), `core/auth` service
-- [ ] `core/guards` — auth guard on protected routes
-- [ ] Tests: signup, duplicate email, login, wrong password, expired session, **revoked session**,
+Also created `users` (owned by `internal/users`, L0) — auth needs an account to attach a session
+to, so the minimal vertical slice includes it. Phase 3 adds `player_profiles` and statistics.
+
+**Credentials are a separate table from `users` on purpose:** the users feature owns identity,
+auth owns the secret, so no query in `internal/users` can return a password hash even by mistake.
+
+- [x] Migration: `sessions` (id UUIDv7, user_id, token_hash, expires_at, created_at, revoked_at)
+- [x] `platform/security/argon2.go` — Argon2id `t=3, m=64MiB, p=4`, 16-byte salt
+- [x] `POST /api/v1/auth/signup`
+- [x] `POST /api/v1/auth/login` — sets `HttpOnly; Secure; SameSite=Lax` cookie
+- [x] `POST /api/v1/auth/logout` — revokes the session row
+- [x] `GET  /api/v1/auth/session` — current user
+- [x] Auth middleware: cookie → SHA-256 → session lookup → bind userID to `context.Context`
+- [x] Rate limiting on login and signup (§59)
+- [x] Angular `features/auth` — signup and login forms (Signal Forms), `core/auth` service
+- [x] `core/guards` — auth guard on protected routes
+- [x] Tests: signup, duplicate email, login, wrong password, expired session, **revoked session**,
       rate limit trip
-- [ ] Verify: password hashes and tokens appear in **no** log line and **no** API response
+- [x] Verify: password hashes and tokens appear in **no** log line and **no** API response
 
 ---
 

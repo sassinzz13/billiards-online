@@ -415,7 +415,16 @@ and knows nothing about where money came from. The game never learns a provider 
 
 ## 17. Security constants
 
-- Passwords: **Argon2id**, `t=3, m=64 MiB, p=4`, 16-byte salt.
+- Passwords: **Argon2id**, `t=3, m=64 MiB, p=4`, 16-byte salt, stored as a PHC string so the
+  parameters can be raised later without invalidating existing passwords. 10–1024 characters.
+  - The 64 MiB is why login and signup **must** stay rate limited: each attempt allocates it, so
+    unbounded concurrency is a memory-exhaustion vector independent of any password guessing.
+  - Login runs `security.DummyVerify` when the email is unknown, so a missing account takes the
+    same ~50ms as a real one. Without it, response time enumerates registered addresses.
+- **Credentials live in an auth-owned `credentials` table, not on `users`.** users owns identity,
+  auth owns the secret, so no query in `internal/users` can return a password hash by mistake.
+- Session TTL 14 days, sliding: renewed on use when under 7 days remain, so an active player is
+  never signed out mid-session while an inactive one still expires.
 - Sessions: 32-byte random token, stored **SHA-256 hashed** in `auth.sessions`. Cookie is
   `HttpOnly; Secure; SameSite=Lax`.
 - WebSocket upgrade reuses that cookie, guarded by a **strict Origin allowlist** — that is what
@@ -475,8 +484,16 @@ Validated by `scripts/validate-asset.mjs`. Until an asset passes, use procedural
 - `game/physics`: table-driven + **invariants** (energy never increases, momentum conserved in
   elastic pairs, balls never leave the table, every shot terminates) + golden-file regression.
 - `game/simulation`: determinism — identical input produces byte-identical output on one architecture.
-- Features: real Postgres via `TEST_DATABASE_URL`, **each test in a transaction that rolls back.**
-  No testcontainers dependency.
+- Features: real Postgres via `TEST_DATABASE_URL`, **each test in a transaction that rolls back**
+  (`platform/postgres/pgtest`). No testcontainers dependency. Tests **skip** when the variable is
+  unset, so `make check` stays runnable with no database.
+  - `make test-db` creates and migrates `billiards_test`; `make test-integration` runs with it set.
+  - Repositories take `postgres.DB` (Query/QueryRow/Exec/Begin), satisfied by both `*pgxpool.Pool`
+    and `pgx.Tx`. That is what lets a test hand a repository a transaction.
+  - **Use `pgtest.Attempt` for any operation a test expects to fail.** PostgreSQL aborts the whole
+    transaction on the first failed statement (25P02), so an unwrapped constraint violation poisons
+    the test's own transaction and every later assertion fails for the wrong reason. `Attempt` runs
+    it in a SAVEPOINT.
 - WebSocket: `httptest.Server` + `coder/websocket` client. Must cover slow-client backpressure close.
 - Angular: Vitest (Angular 22 default); Playwright e2e from Phase 12.
 - **The physics hot loop asserts `0 allocs/op` as a test, not an aspiration.**
@@ -509,6 +526,13 @@ actually loaded. Use `--force-recreate` after editing `traefik.yml`.
 **Each Make recipe line runs in its own shell.** An `exit 0` in a guard on one line does not stop
 the next line from running. Guard and command must share one shell.
 
+**A failed statement aborts the entire PostgreSQL transaction.** Every subsequent statement returns
+25P02 "current transaction is aborted" until rollback. This bites hardest in tests that deliberately
+trigger a constraint violation — use `pgtest.Attempt` (SAVEPOINT) around anything expected to fail.
+
+**`\gexec` does not work inside `psql -c`.** It is a psql meta-command and needs stdin or a script;
+in a `-c` argument it is silently useless. Use a check-then-create instead.
+
 **`ng test`, not `npx vitest run`.** Angular 22's `@angular/build:unit-test` builder configures the
 TestBed environment and Vitest globals. Raw Vitest fails with `describe is not defined`.
 
@@ -534,6 +558,8 @@ Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
 | — | **Path-based routing on one host** rather than an `api.` subdomain — see §10a | 2026-08-14 |
 | — | `lobby` moved L4 → L5; same-layer imports forbidden — see §5 | 2026-08-14 |
 | — | Production domain: `billiards-online.duckdns.org` | 2026-08-14 |
+| — | Credentials in an auth-owned table, never a column on `users` — see §17 | 2026-08-14 |
+| — | `postgres.DB` interface + `pgtest` rollback harness for feature tests — see §21 | 2026-08-14 |
 
 ## 23. Known deviations from the constitution
 
@@ -567,6 +593,19 @@ Called out deliberately rather than applied silently, as §78 requires.
 - Spectator mid-shot join needs a playback seek offset — design in Phase 13.
 
 ---
+
+## 25a. Repository and push convention
+
+Remote: **https://github.com/sassinzz13/billiards-online** (public), default branch `main`.
+Go module path: `github.com/sassinzz13/billiards-online`.
+
+**Push after every completed phase.** One commit per phase, subject line `Phase N: <what landed>`.
+A phase is only pushable when its PLAN.md checklist is fully ticked, `make check` is green, and its
+exit criterion is demonstrably met.
+
+Because the repository is **public**, check before every push that `.env` is untracked and no real
+credential is staged. `.env.example` contains the placeholder `change-me-in-your-local-env` by
+design; anything else matching a credential pattern is a bug.
 
 ## 26. Commands
 

@@ -20,9 +20,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sassinzz13/billiards-online/internal/auth"
+	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/config"
 	"github.com/sassinzz13/billiards-online/platform/logging"
 	"github.com/sassinzz13/billiards-online/platform/postgres"
+	"github.com/sassinzz13/billiards-online/platform/security"
 )
 
 func main() {
@@ -68,8 +71,22 @@ func run() error {
 	defer pool.Close()
 	logger.Info("database connected", "maxConns", cfg.Database.MaxConns)
 
+	// ---- feature wiring ------------------------------------------------------------------
+	// This is the only place features learn about each other. auth (L1) receives users (L0);
+	// users knows nothing about auth. The direction is enforced by tests/arch.
+
+	// 5 attempts, refilling at one per 12s. Generous enough that a real person mistyping a password
+	// never notices, tight enough that credential stuffing is not viable — and each attempt costs
+	// 64 MiB of Argon2, so the limit protects memory as much as it protects accounts (§59).
+	authLimiter := security.NewRateLimiter(1.0/12.0, 5, 15*time.Minute)
+	defer authLimiter.Close()
+
+	usersSvc := users.NewService(pool)
+	authSvc := auth.NewService(pool, usersSvc)
+	authHandler := auth.NewHandler(authSvc, cfg.Env.IsProduction(), authLimiter)
+
 	public := &http.Server{
-		Handler:           newRouter(cfg, logger, pool),
+		Handler:           newRouter(cfg, logger, pool, authHandler),
 		Addr:              cfg.HTTP.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -140,9 +157,9 @@ func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog
 // newRouter builds the public HTTP surface.
 //
 // Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
-// As features land, each registers its own routes here — auth in Phase 2, users in Phase 3, and so
-// on — keeping route ownership with the feature that implements them.
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http.Handler {
+// Each feature registers its own routes through its handler, so route ownership stays with the
+// feature that implements them rather than accumulating in a central router file.
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler) http.Handler {
 	if cfg.Env.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -188,6 +205,8 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http
 	v1.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": 1})
 	})
+
+	authHandler.RegisterRoutes(v1)
 
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{

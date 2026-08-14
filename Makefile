@@ -49,6 +49,28 @@ test-game: ## Run engine tests only — must pass with no DB, no Docker, no netw
 test-unit: ## Run tests that need no external services
 	go test ./platform/... ./game/... ./tests/...
 
+# Integration tests run inside a transaction that is rolled back, so they need a migrated database
+# but never leave anything behind. A SEPARATE database from development: the suite must never be
+# pointed at data anyone cares about.
+test-db: ## Create and migrate the test database
+	@user=$$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2); \
+	pass=$$(grep -E '^POSTGRES_PASSWORD=' .env | cut -d= -f2); \
+	if ! $(COMPOSE) exec -T postgres psql -U $$user -d postgres -tAc \
+	     "SELECT 1 FROM pg_database WHERE datname='billiards_test'" | grep -q 1; then \
+	  $(COMPOSE) exec -T postgres psql -U $$user -d postgres -c "CREATE DATABASE billiards_test"; \
+	fi; \
+	$(COMPOSE) run --rm --entrypoint migrate migrate \
+	  -path /migrations \
+	  -database "postgres://$$user:$$pass@postgres:5432/billiards_test?sslmode=disable" up
+	@echo "Test database ready. Run: make test-integration"
+
+test-integration: ## Run integration tests against the test database
+	@user=$$(grep -E '^POSTGRES_USER=' .env | cut -d= -f2); \
+	pass=$$(grep -E '^POSTGRES_PASSWORD=' .env | cut -d= -f2); \
+	port=$$(grep -E '^POSTGRES_PORT=' .env | cut -d= -f2); \
+	TEST_DATABASE_URL="postgres://$$user:$$pass@localhost:$${port:-5432}/billiards_test?sslmode=disable" \
+	  go test ./... -count=1
+
 arch: ## Enforce import boundaries (MEMORY.md §5, ADR 0001)
 	go test ./tests/arch/ -v
 

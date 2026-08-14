@@ -1,0 +1,93 @@
+/* Shared by the login and signup forms. Feature-local: these two are the only consumers, and a
+   third would be the moment to reconsider, not before (§6). */
+
+:host {
+  display: block;
+  font-family: system-ui, sans-serif;
+  padding: 3rem 1.5rem;
+}
+
+form {
+  max-width: 22rem;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.subtitle {
+  margin: 0 0 2rem;
+  color: #666;
+  font-size: 0.9375rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.label-text {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+input {
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+input:focus {
+  outline: 2px solid #1a73e8;
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  color: #666;
+}
+
+button[type='submit'] {
+  width: 100%;
+  padding: 0.625rem;
+  margin-top: 0.5rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: #1a73e8;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button[type='submit']:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* role="alert" so a screen reader announces the failure rather than leaving it silent. */
+.error {
+  margin: 0 0 1rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.25rem;
+  background: #fce8e6;
+  color: #b3261e;
+  font-size: 0.875rem;
+}
+
+.switch {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: #666;
+}

@@ -22,6 +22,7 @@ import (
 const (
 	KeyRequestID    = "requestId"
 	KeyUserID       = "userId"
+	KeySessionID    = "sessionId"
 	KeyConnectionID = "connectionId"
 	KeyRoomID       = "roomId"
 	KeyMatchID      = "matchId"
