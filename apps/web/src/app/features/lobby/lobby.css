@@ -1,0 +1,183 @@
+:host {
+  display: block;
+  font-family: system-ui, sans-serif;
+  padding: 3rem 1.5rem;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.75rem;
+}
+
+.tagline {
+  margin: 0;
+  color: #666;
+}
+
+.account {
+  text-align: right;
+  font-size: 0.875rem;
+}
+
+.handle {
+  display: block;
+  font-weight: 600;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1a73e8;
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+section {
+  margin-bottom: 2.5rem;
+}
+
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.125rem;
+}
+
+.panel {
+  padding: 1rem;
+  border: 1px solid #e5e5e5;
+  border-radius: 0.375rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+label {
+  display: block;
+  font-size: 0.875rem;
+}
+
+.label-text {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+select,
+input {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  font: inherit;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding-bottom: 0.5rem;
+}
+
+.checkbox input {
+  padding: 0;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ccc;
+  border-radius: 0.25rem;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.primary {
+  border-color: #1a73e8;
+  background: #1a73e8;
+  color: #fff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  margin: 0 0 1rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.25rem;
+  background: #fce8e6;
+  color: #b3261e;
+  font-size: 0.875rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+th,
+td {
+  padding: 0.5rem 0.375rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #666;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.75rem;
+  background: #eef2fb;
+  color: #1a4fba;
+  font-size: 0.75rem;
+}
+
+.empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: #666;
+  font-size: 0.9375rem;
+}
+
+.load-more {
+  display: block;
+  margin: 1rem auto 0;
+}
+
+.phase {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+  color: #888;
+}

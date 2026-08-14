@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { HttpErrorResponse } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
+import { apiErrorMessage } from '../networking/api-error';
 import { ApiClient } from '../networking/api-client';
 
 export interface AccountSummary {
@@ -14,10 +14,6 @@ interface SessionResponse {
   readonly user: AccountSummary;
   readonly email: string;
   readonly expiresAt?: string;
-}
-
-interface ApiErrorBody {
-  readonly error?: { readonly code?: string; readonly message?: string };
 }
 
 /** Signed out, or signed in as someone. `unknown` means the session has not been checked yet. */
@@ -105,28 +101,14 @@ export class AuthService {
     try {
       return await firstValueFrom(this.#api.post<SessionResponse>(path, body));
     } catch (err) {
-      throw new AuthError(messageFor(err));
+      // The server's message is deliberately vague where vagueness matters — "Invalid email or
+      // password" is identical for a wrong password and an unknown account, so it cannot be used
+      // to discover which addresses are registered. apiErrorMessage only unwraps that message; it
+      // never invents a more specific one.
+      throw new AuthError(apiErrorMessage(err, 'Something went wrong. Please try again.'));
     }
   }
 }
 
 /** A failure with a message safe to show the user. */
 export class AuthError extends Error {}
-
-/**
- * Prefers the server's message, which is written for humans and deliberately vague where vagueness
- * matters — "Invalid email or password" is identical for a wrong password and an unknown account,
- * so the API cannot be used to discover which addresses are registered.
- */
-function messageFor(err: unknown): string {
-  if (err instanceof HttpErrorResponse) {
-    const body = err.error as ApiErrorBody | null;
-    if (body?.error?.message) {
-      return body.error.message;
-    }
-    if (err.status === 0) {
-      return 'Cannot reach the server. Check your connection.';
-    }
-  }
-  return 'Something went wrong. Please try again.';
-}

@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sassinzz13/billiards-online/internal/auth"
+	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/config"
 	"github.com/sassinzz13/billiards-online/platform/logging"
@@ -100,8 +101,20 @@ func run() error {
 	}
 	usersHandler := users.NewHandler(usersSvc, authSvc.RequireAuth(), bridgeIdentityToUsers)
 
+	// rooms sits at L4, above auth's L1, so it can depend on auth directly — no bridge needed here
+	// (see internal/rooms/handler.go for the contrast with users).
+	//
+	// 3 rooms per 5 minutes. A real host rarely creates more than one room in a sitting; this is
+	// wide enough not to be felt, tight enough that spamming empty rooms is not a viable way to
+	// pollute public discovery (§59).
+	roomCreateLimiter := security.NewRateLimiter(3.0/300.0, 3, 15*time.Minute)
+	defer roomCreateLimiter.Close()
+
+	roomsSvc := rooms.NewService(pool)
+	roomsHandler := rooms.NewHandler(roomsSvc, authSvc, roomCreateLimiter)
+
 	public := &http.Server{
-		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler),
+		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler, roomsHandler),
 		Addr:              cfg.HTTP.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -174,7 +187,7 @@ func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog
 // Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
 // Each feature registers its own routes through its handler, so route ownership stays with the
 // feature that implements them rather than accumulating in a central router file.
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler) http.Handler {
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler, roomsHandler *rooms.Handler) http.Handler {
 	if cfg.Env.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -223,6 +236,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, auth
 
 	authHandler.RegisterRoutes(v1)
 	usersHandler.RegisterRoutes(v1)
+	roomsHandler.RegisterRoutes(v1)
 
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{

@@ -16,7 +16,7 @@ export const routes: Routes = [
   {
     path: '',
     canActivate: [authGuard],
-    loadComponent: () => import('./features/status/status').then((m) => m.Status),
+    loadComponent: () => import('./features/lobby/lobby').then((m) => m.Lobby),
     title: 'Billiards',
   },
   {
@@ -36,6 +36,12 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./features/profile/profile').then((m) => m.Profile),
     title: 'Your profile · Billiards',
+  },
+  {
+    path: 'rooms/:id',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/rooms/room').then((m) => m.Room),
+    title: 'Room · Billiards',
   },
   { path: '**', redirectTo: '' },
 ];

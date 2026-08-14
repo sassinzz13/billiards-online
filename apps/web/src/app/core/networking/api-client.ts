@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
@@ -24,8 +24,20 @@ export class ApiClient {
   readonly #http = inject(HttpClient);
   readonly #config = inject(APP_CONFIG);
 
-  get<T>(path: string): Observable<T> {
-    return this.#http.get<T>(this.#url(path), { withCredentials: true });
+  /**
+   * query is a plain object rather than HttpParams so callers never import HttpParams themselves —
+   * one fewer thing every feature needs to know about HttpClient's API. undefined values are
+   * dropped, so an optional query parameter (a pagination cursor, say) can be passed through
+   * unconditionally without the caller building the object conditionally first.
+   */
+  get<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Observable<T> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== undefined) {
+        params = params.set(key, value);
+      }
+    }
+    return this.#http.get<T>(this.#url(path), { withCredentials: true, params });
   }
 
   post<T>(path: string, body?: unknown): Observable<T> {

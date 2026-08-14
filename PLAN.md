@@ -9,7 +9,7 @@ file exists is worse than no box at all — it makes this document lie.
 Companion files: [MEMORY.md](MEMORY.md) (conventions and constants), [CLAUDE.md](CLAUDE.md) (session
 rules), [docs/adr/](docs/adr/) (decision rationale).
 
-Last updated: 2026-08-14 (Phase 3 complete)
+Last updated: 2026-08-14 (Phase 4 complete)
 
 ---
 
@@ -21,8 +21,8 @@ Last updated: 2026-08-14 (Phase 3 complete)
 | 1 | Development infrastructure | ✅ Complete |
 | 2 | Authentication | ✅ Complete |
 | 3 | Users | ✅ Complete |
-| 4 | Lobby and rooms | 🔜 Next |
-| 5 | WebSocket foundation | ⬜ |
+| 4 | Lobby and rooms | ✅ Complete |
+| 5 | WebSocket foundation | 🔜 Next |
 | 6 | Match lifecycle | ⬜ |
 | 7 | Physics prototype | ⬜ |
 | 8 | 3D rendering prototype | ⬜ |
@@ -198,19 +198,27 @@ auth owns the secret, so no query in `internal/users` can return a password hash
 **Exit criterion:** concurrent joins on the last open seat produce exactly one winner — proven by a
 concurrency test.
 
-**Owns:** `internal/rooms` (L4), `internal/lobby` (L5) · tables `rooms`, `room_members`
+**Owns:** `internal/rooms` (L4) · tables `rooms`, `room_members`
 
-- [ ] Migration: `rooms` (visibility, mode 1v1/2v2, ranked, ruleset, shot timer, wager amount,
+**Deviation from the original plan:** no `internal/lobby` Go package was created. Its only
+planned behavior for this phase — browse and create — is entirely served by `internal/rooms`'
+own endpoints; there is no distinct data or business logic for lobby to own yet. Creating an
+empty package would be the scaffolding §74 warns against. `lobby` stays reserved at L5 in the
+layer table for whenever matchmaking-driven quick-join gives it real behavior. The Angular
+`features/lobby` still exists as the browse/create page; it simply calls `internal/rooms`
+directly, same as the backend does with itself.
+
+- [x] Migration: `rooms` (visibility, mode 1v1/2v2, ranked, ruleset, shot timer, wager amount,
       spectators allowed, state), `room_members` (side, slot, ready)
-- [ ] `POST /api/v1/rooms`, `POST /api/v1/rooms/:id/join`, `POST /api/v1/rooms/:id/leave`
-- [ ] `POST /api/v1/rooms/:id/ready`
-- [ ] `GET /api/v1/rooms` — public discovery, **paginated**
-- [ ] Private rooms via join code
-- [ ] **Room join is a single transaction with row locking** — capacity is a DB constraint, not a
+- [x] `POST /api/v1/rooms`, `POST /api/v1/rooms/:id/join`, `POST /api/v1/rooms/:id/leave`
+- [x] `POST /api/v1/rooms/:id/ready`
+- [x] `GET /api/v1/rooms` — public discovery, **paginated**
+- [x] Private rooms via join code
+- [x] **Room join is a single transaction with row locking** — capacity is a DB constraint, not a
       Go `if` (§10, §37)
-- [ ] Rate limit on room creation
-- [ ] Angular `features/lobby`, `features/rooms`
-- [ ] Tests: create, join, full room, private code, leave, **N concurrent joins on one seat**
+- [x] Rate limit on room creation
+- [x] Angular `features/lobby`, `features/rooms`
+- [x] Tests: create, join, full room, private code, leave, **N concurrent joins on one seat**
 
 ---
 

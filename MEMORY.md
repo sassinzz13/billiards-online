@@ -509,16 +509,6 @@ Validated by `scripts/validate-asset.mjs`. Until an asset passes, use procedural
 
 ---
 
-**Gin middleware must be flat, never nested.** A `gin.HandlerFunc` returned by one middleware
-constructor (e.g. `authSvc.RequireAuth()`) calls `c.Next()` itself. `c.Next()` advances a **shared
-index across Gin's whole handler chain**, so invoking that returned func as a plain function call
-from *inside* another middleware makes its `c.Next()` run every later handler — including the real
-route handler — before the outer call resumes. The fix is to register both as separate entries in
-one `[]gin.HandlerFunc` passed to Gin, never to call one middleware's handler from within another's
-body. This cost real debugging time in Phase 3 (`internal/users`' auth bridge) and is now a
-regression test: `TestMultipleAuthMiddlewareChainInOrderNotNested` in
-`internal/users/handler_test.go`.
-
 ## 21a. Gotchas discovered the hard way
 
 Each of these cost real debugging time. They are here so they cost it once.
@@ -553,6 +543,37 @@ in a `-c` argument it is silently useless. Use a check-then-create instead.
 **`ng test`, not `npx vitest run`.** Angular 22's `@angular/build:unit-test` builder configures the
 TestBed environment and Vitest globals. Raw Vitest fails with `describe is not defined`.
 
+**Gin middleware must be flat, never nested.** A `gin.HandlerFunc` returned by one middleware
+constructor (e.g. `authSvc.RequireAuth()`) calls `c.Next()` itself. `c.Next()` advances a **shared
+index across Gin's whole handler chain**, so invoking that returned func as a plain function call
+from *inside* another middleware makes its `c.Next()` run every later handler — including the real
+route handler — before the outer call resumes. The fix is to register both as separate entries in
+one `[]gin.HandlerFunc` passed to Gin, never to call one middleware's handler from within another's
+body. This cost real debugging time in Phase 3 (`internal/users`' auth bridge) and is now a
+regression test: `TestMultipleAuthMiddlewareChainInOrderNotNested` in
+`internal/users/handler_test.go`.
+
+**PostgreSQL's `now()` is frozen at transaction start, not per-statement.** `now()` (=
+`transaction_timestamp()`) returns the same value for every statement inside one transaction,
+including across nested SAVEPOINTs. Correct for an audit-style `created_at` — rows written together
+should share a creation instant — **wrong** for any column meant to capture real insertion order
+across what are logically separate operations (`room_members.joined_at`, used to pick "the earliest
+remaining member" on host handoff). Two joins landing in the same transaction — which happens
+constantly in tests sharing one wrapped-and-rolled-back transaction, and would happen in production
+too if operations were ever batched — get an identical timestamp, making "earliest" ambiguous. Fix:
+`clock_timestamp()`, which advances on every call regardless of transaction boundaries. Audit any
+future timestamp column against which of the two behaviours it actually needs.
+
+**A `UNIQUE` index can already guarantee an invariant that a row lock only seems to be enforcing.**
+Verified directly in Phase 4: removing the `FOR UPDATE` lock rooms takes when seating a member did
+not break `TestConcurrentJoinsOnTheLastSeatProduceExactlyOneWinner` — `room_members`'
+`UNIQUE(room_id, side, slot)` index serializes the conflicting `INSERT`s on its own, regardless of
+any lock on the parent row. Before crediting a lock with correctness, check whether removing it
+actually changes the observable outcome; it may only be improving performance (turning N-1 wasted
+`INSERT` attempts into a clean early rejection) or protecting a *different* invariant nearby (here,
+the row lock is still required for `Leave`'s host-handoff, which has no unique-constraint backstop
+of its own).
+
 ## 22. Decision log
 
 Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
@@ -579,6 +600,10 @@ Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
 | — | `postgres.DB` interface + `pgtest` rollback harness for feature tests — see §21 | 2026-08-14 |
 | — | Profile split from `users` into its own table, created atomically alongside every account — see §15 | 2026-08-14 |
 | — | Cross-layer identity uses a feature-owned context carrier, not an upward import — see §5 | 2026-08-14 |
+| — | No `internal/lobby` package yet — its Phase 4 behavior is fully served by `internal/rooms` | 2026-08-14 |
+| — | Private rooms are joined exclusively by code, never by id — see `ErrWrongJoinPath` | 2026-08-14 |
+| — | Room fullness is computed (capacity vs member count), never a stored "full" state | 2026-08-14 |
+| — | `room_members.joined_at` uses `clock_timestamp()`, not `now()` — see §21a | 2026-08-14 |
 
 ## 23. Known deviations from the constitution
 

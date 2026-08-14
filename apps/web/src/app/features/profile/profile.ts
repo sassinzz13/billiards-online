@@ -1,8 +1,8 @@
-import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
+import { apiErrorMessage } from '../../core/networking/api-error';
 import { OwnProfile, ProfileEdit, ProfileService } from './profile.service';
 
 type Load = { state: 'loading' } | { state: 'ready' } | { state: 'error'; message: string };
@@ -170,19 +170,9 @@ export class Profile {
       this.#avatarDirty.set(false);
       this.savedJustNow.set(true);
     } catch (err) {
-      this.saveError.set(messageFor(err));
+      this.saveError.set(apiErrorMessage(err, 'Could not save your changes. Please try again.'));
     } finally {
       this.saving.set(false);
     }
   }
-}
-
-function messageFor(err: unknown): string {
-  if (err instanceof HttpErrorResponse) {
-    const body = err.error as { error?: { message?: string } } | null;
-    if (body?.error?.message) {
-      return body.error.message;
-    }
-  }
-  return 'Could not save your changes. Please try again.';
 }
