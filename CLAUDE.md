@@ -67,18 +67,20 @@ public — confirm `.env` is untracked before pushing. See MEMORY.md §25a.
 
 ## Current state
 
-**Phases 0-3 complete.** Players can sign up, sign in, sign out, and view/edit their own profile.
-`internal/users` (L0) owns identity + profile; `internal/auth` (L1) owns credentials and sessions.
-91 Go tests and 26 Angular tests pass.
+**Phases 0-5 complete.** Players can sign up, sign in, view/edit their profile, create/browse/join
+rooms with ready states, and open an authenticated, versioned, bounded WebSocket at `/ws`.
+`internal/realtime` (L6) owns the gateway; `platform/websocket` owns the transport;
+`game/protocol` owns the envelope. No `internal/lobby` package exists yet (PLAN.md Phase 4 explains
+why). 142 Go tests and 54 Angular tests pass.
 
-**Phase 4 (lobby and rooms) is next.**
+**Phase 6 (match lifecycle) is next.** No gameplay message type exists on the wire yet — every
+envelope type reaching the router today is "unknown" by design; Phase 6 starts changing that.
 
 Integration tests need a database: `make test-db` once, then `make test-integration`. Without
 `TEST_DATABASE_URL` they skip, which is why `make check` alone can look deceptively small.
 
-Two things worth reading before touching auth/users again: MEMORY.md §5 on how a lower-layer
-feature carries identity from a higher-layer one without an upward import, and §21a on why Gin
-middleware must be chained flat, never called from inside another middleware's body.
-
-Before writing feature code, read MEMORY.md §5 (layer table), §10a (routing), and §21a (gotchas
-that already cost debugging time once).
+Before touching realtime code, read MEMORY.md §5 (layer table — note `realtime` and `rooms` may
+import `auth` directly, `users` may not) and §21a, which now holds five hard-won gotchas: Gin
+middleware chaining, `now()` vs `clock_timestamp()`, a `UNIQUE` index outperforming a row lock,
+`Close` racing the write pump (use `CloseAfterDrain` to order a send before a close), and why a
+graceful close can itself stall under extreme backlog without that meaning the policy failed.

@@ -10,7 +10,7 @@ do not leave two contradictory statements in this file.
 Companion files: [PLAN.md](PLAN.md) (roadmap + checklist), [CLAUDE.md](CLAUDE.md) (session rules),
 [docs/adr/](docs/adr/) (full rationale for each decision below).
 
-Last updated: 2026-08-14 (Phase 0)
+Last updated: 2026-08-14 (Phase 5 complete)
 
 ---
 
@@ -543,6 +543,37 @@ in a `-c` argument it is silently useless. Use a check-then-create instead.
 **`ng test`, not `npx vitest run`.** Angular 22's `@angular/build:unit-test` builder configures the
 TestBed environment and Vitest globals. Raw Vitest fails with `describe is not defined`.
 
+**A direct `Close()` races the write pump — order a "send, then close" through the same queue.**
+`platform/websocket.Conn.Close` writes its close frame immediately and independently of the
+outbound channel; coder/websocket allows that concurrency, but "allowed" is not "ordered." Enqueue
+an explanation via `Send`, then call `Close` right after, and the close frame can reach the client
+*before* the explanation — verified directly by swapping in a real `Close` where
+`CloseAfterDrain` belongs and watching a test fail. `CloseAfterDrain` queues a close instruction
+behind whatever is already enqueued instead, so ordering is automatic (the write pump is a single
+FIFO consumer). Use it for "explain, then close" (malformed frame, version mismatch); use a direct
+`Close` only when the policy really is "don't wait" (the backpressure path — see next entry).
+
+**A graceful WebSocket close can itself get stuck behind the same backlog it's trying to escape.**
+Verified against a client that floods ~190K messages through Traefik while never reading: the
+server detects the full outbound queue and calls `Close` within ~10ms every time — the mechanism is
+prompt and correct — but coder/websocket's close handshake has its own internal 5s timeout waiting
+for the peer's acknowledgment, and a client *that* overloaded cannot complete a handshake in time.
+The connection still terminates (confirmed: no hang, no unbounded growth — the actual guarantee),
+just without a clean status code reaching the client in this specific extreme. Direct, isolated
+tests (no proxy, ordinary flood size) reliably observe the clean `StatusSlowClient` code —
+`TestSlowClientTriggersBackpressureClose` in `platform/websocket`. Don't mistake "the E2E script
+under adversarial load didn't decode a close code" for a bug in the policy; check what the server
+actually did (the queue-full and close-attempt log lines) before assuming the mechanism failed.
+
+**90 small messages fill a 64-slot Go channel; they don't fill a real network path.** Backpressure
+through a proxy (client → Traefik → server) requires the OS send/receive buffers at *every* hop to
+fill, not just the in-process channel — hundreds of KB, not the 64 slots' worth of bytes alone. A
+same-process test (httptest, no real hop) hits the channel limit almost immediately because nothing
+else is in the way; an end-to-end test through Traefik needed on the order of 10⁵ messages before
+the client's own send call ever blocked. Size flood volume to what's actually being tested: the
+in-process channel limit (small flood, isolated test) versus real multi-hop backpressure (large
+flood, E2E test) are different things with different thresholds.
+
 **Gin middleware must be flat, never nested.** A `gin.HandlerFunc` returned by one middleware
 constructor (e.g. `authSvc.RequireAuth()`) calls `c.Next()` itself. `c.Next()` advances a **shared
 index across Gin's whole handler chain**, so invoking that returned func as a plain function call
@@ -604,6 +635,9 @@ Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
 | — | Private rooms are joined exclusively by code, never by id — see `ErrWrongJoinPath` | 2026-08-14 |
 | — | Room fullness is computed (capacity vs member count), never a stored "full" state | 2026-08-14 |
 | — | `room_members.joined_at` uses `clock_timestamp()`, not `now()` — see §21a | 2026-08-14 |
+| — | Precomputed reasoning holds: no per-match ticker exists; match actor idle between shots (ADR 0005) | 2026-08-14 |
+| — | Backpressure close is immediate (`Close`), never ordered — contrast with `CloseAfterDrain` for explained closes | 2026-08-14 |
+| — | Connection lifetime derives from the shared shutdown context, not `c.Request.Context()` — see §12 | 2026-08-14 |
 
 ## 23. Known deviations from the constitution
 

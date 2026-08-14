@@ -9,7 +9,7 @@ file exists is worse than no box at all — it makes this document lie.
 Companion files: [MEMORY.md](MEMORY.md) (conventions and constants), [CLAUDE.md](CLAUDE.md) (session
 rules), [docs/adr/](docs/adr/) (decision rationale).
 
-Last updated: 2026-08-14 (Phase 4 complete)
+Last updated: 2026-08-14 (Phase 5 complete)
 
 ---
 
@@ -22,8 +22,8 @@ Last updated: 2026-08-14 (Phase 4 complete)
 | 2 | Authentication | ✅ Complete |
 | 3 | Users | ✅ Complete |
 | 4 | Lobby and rooms | ✅ Complete |
-| 5 | WebSocket foundation | 🔜 Next |
-| 6 | Match lifecycle | ⬜ |
+| 5 | WebSocket foundation | ✅ Complete |
+| 6 | Match lifecycle | 🔜 Next |
 | 7 | Physics prototype | ⬜ |
 | 8 | 3D rendering prototype | ⬜ |
 | 9 | Authoritative synchronization | ⬜ |
@@ -231,18 +231,18 @@ to grow a queue.
 
 **Owns:** `platform/websocket`, `internal/realtime` (L6), `game/protocol`
 
-- [ ] `platform/websocket` — connection, read pump, write pump, **32 KB read limit**,
+- [x] `platform/websocket` — connection, read pump, write pump, **32 KB read limit**,
       **bounded outbound chan (64)**
-- [ ] Every goroutine has an owner and a cancellation context (§40)
-- [ ] `internal/realtime/gateway` — **Origin allowlist**, session cookie auth, bind userID
-- [ ] `internal/realtime/router` — decode envelope, dispatch by type
-- [ ] `game/protocol` — envelope `{v, type, seq, requestId, matchId, ts, payload}`, JSON codec
-- [ ] Server→client monotonic `seq` per connection
-- [ ] Unknown message type → `error` envelope, never a silent drop
-- [ ] **Backpressure: outbound queue full → close with policy code** (never drop, never drain)
-- [ ] Angular `core/networking` — one `RealtimeService`, lifecycle, reconnect with backoff,
+- [x] Every goroutine has an owner and a cancellation context (§40)
+- [x] `internal/realtime/gateway` — **Origin allowlist**, session cookie auth, bind userID
+- [x] `internal/realtime/router` — decode envelope, dispatch by type
+- [x] `game/protocol` — envelope `{v, type, seq, requestId, matchId, ts, payload}`, JSON codec
+- [x] Server→client monotonic `seq` per connection
+- [x] Unknown message type → `error` envelope, never a silent drop
+- [x] **Backpressure: outbound queue full → close with policy code** (never drop, never drain)
+- [x] Angular `core/networking` — one `RealtimeService`, lifecycle, reconnect with backoff,
       sequence tracking, typed decode
-- [ ] Tests: auth ok, auth rejected, **bad Origin rejected**, malformed frame, **oversized frame**,
+- [x] Tests: auth ok, auth rejected, **bad Origin rejected**, malformed frame, **oversized frame**,
       unknown type, disconnect, **slow client → backpressure close**
 
 ---

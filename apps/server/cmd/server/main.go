@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sassinzz13/billiards-online/internal/auth"
+	"github.com/sassinzz13/billiards-online/internal/realtime"
 	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/config"
@@ -113,13 +114,21 @@ func run() error {
 	roomsSvc := rooms.NewService(pool)
 	roomsHandler := rooms.NewHandler(roomsSvc, authSvc, roomCreateLimiter)
 
+	// realtime sits at L6, the top of the stack, so it may depend on any feature below it — auth
+	// directly, same reasoning as rooms. ctx (not c.Request.Context()) is what every open
+	// connection's lifetime derives from; see NewGateway's doc comment for why that distinction
+	// matters at shutdown.
+	gateway := realtime.NewGateway(authSvc, cfg, ctx)
+
 	public := &http.Server{
-		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler, roomsHandler),
+		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler, roomsHandler, gateway),
 		Addr:              cfg.HTTP.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		// No WriteTimeout: it would cap WebSocket connection lifetime once Phase 5 lands.
-		// Per-request deadlines are enforced by context instead.
+		// No WriteTimeout: it would cap the lifetime of every WebSocket connection at /ws, which
+		// is meant to stay open far longer than any ordinary HTTP request. Per-request deadlines
+		// are enforced by context instead (platform/websocket.WriteTimeout bounds each individual
+		// frame write).
 	}
 
 	// pprof lives on a separate listener so it is never routed publicly. Traefik only ever sees
@@ -187,7 +196,7 @@ func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog
 // Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
 // Each feature registers its own routes through its handler, so route ownership stays with the
 // feature that implements them rather than accumulating in a central router file.
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler, roomsHandler *rooms.Handler) http.Handler {
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler, roomsHandler *rooms.Handler, gateway *realtime.Gateway) http.Handler {
 	if cfg.Env.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -228,6 +237,11 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, auth
 			"checks": gin.H{"database": "up"},
 		})
 	})
+
+	// Realtime gateway. At root, not under /api/v1 — matching the routing table in MEMORY.md §11:
+	// anything that changes live match state goes over WebSocket, everything else is REST. Traefik
+	// already routes PathPrefix(/ws) to this service alongside /api (docker-compose.yml).
+	r.GET("/ws", gateway.ServeWS)
 
 	v1 := r.Group("/api/v1")
 	v1.GET("/health", func(c *gin.Context) {
