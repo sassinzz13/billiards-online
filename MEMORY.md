@@ -10,7 +10,7 @@ do not leave two contradictory statements in this file.
 Companion files: [PLAN.md](PLAN.md) (roadmap + checklist), [CLAUDE.md](CLAUDE.md) (session rules),
 [docs/adr/](docs/adr/) (full rationale for each decision below).
 
-Last updated: 2026-08-14 (Phase 5 complete)
+Last updated: 2026-08-14 (Phase 6 complete)
 
 ---
 
@@ -345,7 +345,26 @@ Waiting ──> Starting ──> InProgress ──> Completed
 ```
 
 Transitions live in exactly one function, `matches.Transition(from, to) error`. Illegal transitions
-are rejected there and nowhere else (§20). Terminal states are terminal.
+are rejected there and nowhere else (§20). Terminal states are terminal. `Paused` may additionally
+go to `Cancelled`/`Abandoned` — not drawn in the diagram above, but a paused match still needs an
+exit besides resuming (Phase 6 addition, e.g. a side that never comes back).
+
+**Implemented in Phase 6** as `internal/matches`' `Actor` (`actor.go`): one goroutine per match,
+spawned by `Registry.Start` (bounded inbound `chan command`, capacity 32, for early/advisory
+`Stop()`). The actor persists every transition synchronously through its own repository calls
+before emitting an `Event`, so `Service.Get` (a plain DB read, no messaging the actor) is never more
+than one write behind — a concurrent HTTP read never needs to go through the actor at all. On
+`ctx.Done()` (the process's own shutdown context, same reasoning as `internal/realtime`'s gateway —
+see its `NewGateway` doc comment) the actor transitions to `Abandoned` with a short background
+deadline and returns, removing itself from the registry — verified by
+`TestActorRemovesItselfFromRegistryOnExit`, which polls `Registry.Len()` rather than sleeping a
+fixed duration.
+
+**Turn ownership in Phase 6 is a placeholder, not `game/rules`.** There is no shot mechanism yet
+(Phase 9) and no `game/rules` package yet (Phase 11), so `matches.nextTurn` (`turn.go`) advances the
+clock mechanically on a shot-timer timeout — round-robin across both sides, alternating every turn
+(A0, B0, A1, B1, ...) — with no notion of foul, legality, or a potted ball. **This function moves to
+`game/rules` once fouls exist to decide continuation** — see §14's note below.
 
 ## 14. Participants — sides, never "player1/player2"
 
@@ -356,11 +375,19 @@ type Match   struct { Sides [2]Side; Turn TurnRef }
 ```
 
 1v1 and 2v2 differ only in `len(Players)` and the rules layer's turn-advance function. **Nothing
-outside `game/rules` may compute whose turn it is.** Modelled in Phase 6, exercised in Phase 14, so
-2v2 needs no rewrite.
+outside `game/rules` may compute whose turn it is** once `game/rules` exists (Phase 11) — Phase 6's
+`matches.nextTurn` is the pre-physics stand-in described in §13, not a permanent exception to this
+rule. Modelled in Phase 6, exercised in Phase 14, so 2v2 needs no rewrite — verified directly:
+`TestTurnAdvance2v2` walks the same sequencing function 1v1 uses with no special case.
 
 **Rooms are not matches** (§21). A room is players preparing to play; it holds config and ready
-flags, creates a match, and then has no authority over it.
+flags, creates a match, and then has no authority over it. **Implemented in Phase 6** as
+`rooms.Service.Start` (host-only, requires the room at capacity with every member ready): it inserts
+the match and closes the room in one transaction (`postgres.InTx`), then spawns the match's actor
+only after that transaction has actually committed — see `matches.Service.CreateInTx`'s doc comment
+for why spawning any earlier would be wrong. `matches` (L3) never imports `rooms` (L4); the room
+→ match direction is enforced simply by which package calls which (§5), no interface inversion
+needed since rooms already imports matches downward.
 
 ---
 
@@ -638,6 +665,10 @@ Full rationale, alternatives, and consequences for each: [docs/adr/](docs/adr/).
 | — | Precomputed reasoning holds: no per-match ticker exists; match actor idle between shots (ADR 0005) | 2026-08-14 |
 | — | Backpressure close is immediate (`Close`), never ordered — contrast with `CloseAfterDrain` for explained closes | 2026-08-14 |
 | — | Connection lifetime derives from the shared shutdown context, not `c.Request.Context()` — see §12 | 2026-08-14 |
+| — | `matches` table has no FK to `rooms` — an L3 table cannot reference an L4 table; see migration 000005 | 2026-08-14 |
+| — | Phase 6 turn advance is a mechanical round-robin stand-in in `internal/matches`, not `game/rules` — see §13 | 2026-08-14 |
+| — | Match actor spawned only after its creating transaction commits, never inside it — see §14, `CreateInTx` | 2026-08-14 |
+| — | `match.starting`/`match.started`/`turn.started` defined in `game/protocol` with no sender yet — delivery waits for Phase 9's connection registry | 2026-08-14 |
 
 ## 23. Known deviations from the constitution
 

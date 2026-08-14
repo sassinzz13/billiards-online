@@ -23,8 +23,8 @@ Last updated: 2026-08-14 (Phase 5 complete)
 | 3 | Users | ✅ Complete |
 | 4 | Lobby and rooms | ✅ Complete |
 | 5 | WebSocket foundation | ✅ Complete |
-| 6 | Match lifecycle | 🔜 Next |
-| 7 | Physics prototype | ⬜ |
+| 6 | Match lifecycle | ✅ Complete |
+| 7 | Physics prototype | 🔜 Next |
 | 8 | 3D rendering prototype | ⬜ |
 | 9 | Authoritative synchronization | ⬜ |
 | 10 | Advanced billiards physics | ⬜ |
@@ -256,18 +256,18 @@ already supports 2v2 without any code change.
 
 **Owns:** `internal/matches` (L3) · tables `matches`, `match_sides`, `match_participants`, `match_events`
 
-- [ ] Migration: `matches` (state, mode, ranked, ruleset, room_id, started_at, completed_at),
+- [x] Migration: `matches` (state, mode, ranked, ruleset, room_id, started_at, completed_at),
       `match_sides`, `match_participants`, `match_events`
-- [ ] `matches.Transition(from, to) error` — **the only place transitions are validated** (§20)
-- [ ] `Side{ID, Players []uuid.UUID}` / `TurnRef{Side, PlayerIdx}` — **sides, never player1/player2**
-- [ ] Room → match creation, in one transaction
-- [ ] Match actor: one goroutine per match, bounded inbound chan (32), owns state exclusively
-- [ ] Match registry `map[uuid.UUID]*actor` behind `sync.RWMutex`
-- [ ] Actor lifecycle: created on start, cancelled on completion, **no leaks** (verified by test)
-- [ ] Turn ownership + shot timer via `time.Timer`
-- [ ] Protocol: `match.starting`, `match.started`, `turn.started`
-- [ ] `GET /api/v1/matches/:id`, `GET /api/v1/users/:id/matches` (paginated)
-- [ ] Tests: legal transitions, **every illegal transition rejected**, sides with 1 and 2 players,
+- [x] `matches.Transition(from, to) error` — **the only place transitions are validated** (§20)
+- [x] `Side{ID, Players []uuid.UUID}` / `TurnRef{Side, PlayerIdx}` — **sides, never player1/player2**
+- [x] Room → match creation, in one transaction
+- [x] Match actor: one goroutine per match, bounded inbound chan (32), owns state exclusively
+- [x] Match registry `map[uuid.UUID]*actor` behind `sync.RWMutex`
+- [x] Actor lifecycle: created on start, cancelled on completion, **no leaks** (verified by test)
+- [x] Turn ownership + shot timer via `time.Timer`
+- [x] Protocol: `match.starting`, `match.started`, `turn.started`
+- [x] `GET /api/v1/matches/:id`, `GET /api/v1/users/:id/matches` (paginated)
+- [x] Tests: legal transitions, **every illegal transition rejected**, sides with 1 and 2 players,
       turn advance, actor shutdown leaves no goroutine
 
 ---

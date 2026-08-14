@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sassinzz13/billiards-online/internal/auth"
+	"github.com/sassinzz13/billiards-online/internal/matches"
 	"github.com/sassinzz13/billiards-online/internal/realtime"
 	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
@@ -102,6 +103,15 @@ func run() error {
 	}
 	usersHandler := users.NewHandler(usersSvc, authSvc.RequireAuth(), bridgeIdentityToUsers)
 
+	// matches sits at L3, below rooms' L4 — rooms imports it directly to turn a full, ready room
+	// into a match (internal/rooms/service.go's Start). ctx, not a per-request context, is what
+	// every match actor's lifetime derives from, same reasoning as the realtime gateway below: an
+	// actor must stop the instant the process starts shutting down, not linger on an unrelated
+	// per-request deadline.
+	matchesRegistry := matches.NewRegistry()
+	matchesSvc := matches.NewService(pool, matchesRegistry, ctx, logger)
+	matchesHandler := matches.NewHandler(matchesSvc, authSvc)
+
 	// rooms sits at L4, above auth's L1, so it can depend on auth directly — no bridge needed here
 	// (see internal/rooms/handler.go for the contrast with users).
 	//
@@ -111,7 +121,7 @@ func run() error {
 	roomCreateLimiter := security.NewRateLimiter(3.0/300.0, 3, 15*time.Minute)
 	defer roomCreateLimiter.Close()
 
-	roomsSvc := rooms.NewService(pool)
+	roomsSvc := rooms.NewService(pool, matchesSvc)
 	roomsHandler := rooms.NewHandler(roomsSvc, authSvc, roomCreateLimiter)
 
 	// realtime sits at L6, the top of the stack, so it may depend on any feature below it — auth
@@ -121,7 +131,7 @@ func run() error {
 	gateway := realtime.NewGateway(authSvc, cfg, ctx)
 
 	public := &http.Server{
-		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler, roomsHandler, gateway),
+		Handler:           newRouter(cfg, logger, pool, authHandler, usersHandler, roomsHandler, matchesHandler, gateway),
 		Addr:              cfg.HTTP.Addr,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -150,7 +160,7 @@ func run() error {
 		logger.Info("shutdown signal received")
 	}
 
-	return shutdown(public, internal, cfg.HTTP.ShutdownTimeout, logger)
+	return shutdown(public, internal, matchesRegistry, cfg.HTTP.ShutdownTimeout, logger)
 }
 
 func serve(srv *http.Server, name string, logger *slog.Logger, errc chan<- error) {
@@ -166,15 +176,19 @@ func serve(srv *http.Server, name string, logger *slog.Logger, errc chan<- error
 // cannot make total shutdown take twice as long as configured. Exceeding the budget drops in-flight
 // requests, which is preferable to a deploy that hangs indefinitely.
 //
-// From Phase 6 this is also where match actors are stopped, so a deploy never corrupts an
-// in-progress match. See §62.
-func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog.Logger) error {
+// Match actors are given the same shared budget: they already stop on their own the instant ctx
+// (the process's shutdown context, not this function's timeout-bound one) is cancelled — see
+// matches.NewService and Actor.run — so registry.Wait here is just making sure the deploy doesn't
+// proceed while one is still mid-persist, never what triggers them to stop. See §62.
+func shutdown(public, internal *http.Server, registry *matches.Registry, timeout time.Duration, logger *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	done := make(chan error, 2)
 	go func() { done <- public.Shutdown(ctx) }()
 	go func() { done <- internal.Shutdown(ctx) }()
+
+	registry.Wait(ctx)
 
 	var errs []error
 	for range 2 {
@@ -196,7 +210,7 @@ func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog
 // Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
 // Each feature registers its own routes through its handler, so route ownership stays with the
 // feature that implements them rather than accumulating in a central router file.
-func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler, roomsHandler *rooms.Handler, gateway *realtime.Gateway) http.Handler {
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, authHandler *auth.Handler, usersHandler *users.Handler, roomsHandler *rooms.Handler, matchesHandler *matches.Handler, gateway *realtime.Gateway) http.Handler {
 	if cfg.Env.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -251,6 +265,7 @@ func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, auth
 	authHandler.RegisterRoutes(v1)
 	usersHandler.RegisterRoutes(v1)
 	roomsHandler.RegisterRoutes(v1)
+	matchesHandler.RegisterRoutes(v1)
 
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{

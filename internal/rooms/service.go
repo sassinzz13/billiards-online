@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/sassinzz13/billiards-online/internal/matches"
 	"github.com/sassinzz13/billiards-online/platform/postgres"
 )
 
@@ -22,16 +23,17 @@ import (
 // feature's tables" still holds. Recorded here because it is a deliberate reading of that rule, not
 // an oversight.
 type Service struct {
-	db postgres.DB
+	db      postgres.DB
+	matches *matches.Service
 }
 
-func NewService(db postgres.DB) *Service {
-	return &Service{db: db}
+func NewService(db postgres.DB, matchesSvc *matches.Service) *Service {
+	return &Service{db: db, matches: matchesSvc}
 }
 
 // WithDB returns a Service bound to a different DB — see users.Service.WithDB for why this exists.
 func (s *Service) WithDB(db postgres.DB) *Service {
-	return &Service{db: db}
+	return &Service{db: db, matches: s.matches}
 }
 
 // Create opens a room and seats the host in the first slot.
@@ -238,6 +240,98 @@ func (s *Service) Detail(ctx context.Context, roomID, viewerID uuid.UUID) (Detai
 	}
 
 	return Detail{Room: room, Members: views}, nil
+}
+
+// Start turns a full, fully-ready room into a match — the "Room → match creation, in one
+// transaction" step MEMORY.md §14 and PLAN.md's Phase 6 checklist call for. Closing the room and
+// inserting the match's rows happen in the same transaction so a crash between them can never leave
+// a room open with a match that does not exist, or a match whose room never actually closed.
+//
+// The room's authority ends here (§14): once this returns, s.matches owns the result completely,
+// and this function's caller only sees the match id.
+func (s *Service) Start(ctx context.Context, roomID, userID uuid.UUID) (matches.Match, error) {
+	var match matches.Match
+	err := postgres.InTx(ctx, s.db, func(tx pgx.Tx) error {
+		room, err := selectRoomForUpdate(ctx, tx, roomID)
+		if err != nil {
+			return err
+		}
+		if room.HostUserID != userID {
+			return ErrNotHost
+		}
+		if room.State != StateOpen {
+			return ErrRoomClosed
+		}
+
+		members, err := selectMembers(ctx, tx, roomID)
+		if err != nil {
+			return err
+		}
+		if len(members) != room.Mode.Capacity() {
+			return ErrRoomNotFull
+		}
+		for _, m := range members {
+			if !m.Ready {
+				return ErrNotAllReady
+			}
+		}
+
+		sides, err := buildMatchSides(room.Mode, members)
+		if err != nil {
+			return err
+		}
+
+		m, err := s.matches.CreateInTx(ctx, tx, matches.CreateInput{
+			RoomID:           room.ID,
+			Mode:             toMatchMode(room.Mode),
+			Ranked:           room.Ranked,
+			Ruleset:          room.Ruleset,
+			ShotTimerSeconds: room.ShotTimerSeconds,
+			Sides:            sides,
+		})
+		if err != nil {
+			return err
+		}
+		match = m
+
+		return closeRoom(ctx, tx, roomID)
+	})
+	if err != nil {
+		return matches.Match{}, err
+	}
+
+	// Spawned only after the transaction above has actually committed — see
+	// matches.Service.CreateInTx's doc comment for why an actor must never run against a match that
+	// might still be rolled back.
+	s.matches.StartActor(match)
+	return match, nil
+}
+
+// buildMatchSides re-groups a room's members (side, slot, user id) into matches.Side's shape.
+// Start has already checked the room is exactly at capacity, so every (side, slot) pair implied by
+// mode is guaranteed to be occupied — the same invariant room_members_seat_key enforces in the
+// database.
+func buildMatchSides(mode Mode, members []Member) ([2]matches.Side, error) {
+	var sides [2]matches.Side
+	sides[0].ID, sides[1].ID = matches.SideA, matches.SideB
+	perSide := mode.PlayersPerSide()
+	sides[0].Players = make([]uuid.UUID, perSide)
+	sides[1].Players = make([]uuid.UUID, perSide)
+
+	for _, m := range members {
+		if m.Side < 0 || m.Side > 1 || m.Slot < 0 || m.Slot >= perSide {
+			return sides, fmt.Errorf("room member seat (%d,%d) out of range for mode %s", m.Side, m.Slot, mode)
+		}
+		sides[m.Side].Players[m.Slot] = m.UserID
+	}
+	return sides, nil
+}
+
+func toMatchMode(m Mode) matches.Mode {
+	if m == Mode2v2 {
+		return matches.Mode2v2
+	}
+	return matches.Mode1v1
 }
 
 // ListPublicOpen returns one page of public, joinable rooms plus the cursor for the next page

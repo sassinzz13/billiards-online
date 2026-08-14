@@ -2,6 +2,7 @@ package rooms_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sassinzz13/billiards-online/internal/auth"
+	"github.com/sassinzz13/billiards-online/internal/matches"
 	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/postgres/pgtest"
@@ -36,7 +38,8 @@ func newRoomsAPI(t *testing.T) roomsAPI {
 	tx := pgtest.DB(t)
 	usersSvc := users.NewService(tx)
 	authSvc := auth.NewService(tx, usersSvc)
-	roomsSvc := rooms.NewService(tx)
+	matchesSvc := matches.NewService(tx, nil, context.Background(), nil)
+	roomsSvc := rooms.NewService(tx, matchesSvc)
 
 	limiter := security.NewRateLimiter(100, 100, time.Minute)
 	t.Cleanup(limiter.Close)

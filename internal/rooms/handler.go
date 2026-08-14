@@ -204,6 +204,41 @@ func (h *Handler) ready(c *gin.Context) {
 	c.JSON(http.StatusOK, toDetailResponse(detail, userID))
 }
 
+func (h *Handler) start(c *gin.Context) {
+	userID, ok := requireUserID(c)
+	if !ok {
+		return
+	}
+	roomID, ok := parseRoomID(c)
+	if !ok {
+		return
+	}
+
+	match, err := h.svc.Start(c.Request.Context(), roomID, userID)
+	if err != nil {
+		h.writeStartError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"matchId": match.ID})
+}
+
+func (h *Handler) writeStartError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		notFound(c)
+	case errors.Is(err, ErrNotHost):
+		c.JSON(http.StatusForbidden, gin.H{"error": gin.H{"code": "rooms.not_host", "message": "Only the host can start the match."}})
+	case errors.Is(err, ErrRoomClosed):
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "rooms.closed", "message": "This room is closed."}})
+	case errors.Is(err, ErrRoomNotFull):
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "rooms.not_full", "message": "The room is not full yet."}})
+	case errors.Is(err, ErrNotAllReady):
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "rooms.not_all_ready", "message": "Not everyone is ready yet."}})
+	default:
+		internalError(c, "start match", err)
+	}
+}
+
 // allowCreate rate-limits by user id rather than IP: every caller here is authenticated, and a
 // per-user key does not punish several players behind one NAT the way an IP key would (§59).
 func (h *Handler) allowCreate(c *gin.Context, userID uuid.UUID) bool {

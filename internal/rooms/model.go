@@ -168,6 +168,11 @@ var (
 	// join-by-code is used for a public one — each visibility has exactly one entry path, and
 	// mixing them up is a client bug worth a specific message rather than a generic 404.
 	ErrWrongJoinPath = errors.New("private rooms are joined by code; public rooms are joined by id")
+
+	// Errors from Start — turning a room into a match (MEMORY.md §14).
+	ErrNotHost     = errors.New("only the host can start the match")
+	ErrRoomNotFull = errors.New("room is not full")
+	ErrNotAllReady = errors.New("not every member is ready")
 )
 
 func (v Visibility) valid() bool { return v == VisibilityPublic || v == VisibilityPrivate }

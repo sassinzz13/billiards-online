@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/sassinzz13/billiards-online/internal/matches"
 	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/postgres/pgtest"
@@ -29,7 +30,8 @@ func TestConcurrentJoinsOnTheLastSeatProduceExactlyOneWinner(t *testing.T) {
 	pool := pgtest.Pool(t)
 	ctx := pgtest.Context(t)
 
-	roomsSvc := rooms.NewService(pool)
+	matchesSvc := matches.NewService(pool, nil, context.Background(), nil)
+	roomsSvc := rooms.NewService(pool, matchesSvc)
 	usersSvc := users.NewService(pool)
 
 	host := newRealUser(t, ctx, usersSvc)

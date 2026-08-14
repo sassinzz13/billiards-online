@@ -19,4 +19,5 @@ func (h *Handler) RegisterRoutes(v1 *gin.RouterGroup) {
 	g.POST("/:id/join", h.join)
 	g.POST("/:id/leave", h.leave)
 	g.POST("/:id/ready", h.ready)
+	g.POST("/:id/start", h.start)
 }

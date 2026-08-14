@@ -1,6 +1,7 @@
 package rooms_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/sassinzz13/billiards-online/internal/matches"
 	"github.com/sassinzz13/billiards-online/internal/rooms"
 	"github.com/sassinzz13/billiards-online/internal/users"
 	"github.com/sassinzz13/billiards-online/platform/postgres/pgtest"
@@ -17,10 +19,14 @@ import (
 // newFixture wires rooms.Service and users.Service to the same rolled-back transaction, mirroring
 // internal/auth's test fixture. Every test in this file (except the concurrency test, which needs
 // real separate connections) runs inside one transaction that never commits.
+//
+// matches.Service is built with a nil registry: these tests exercise rooms in isolation and never
+// call Start, so there is no actor to spawn — see matches.Service.StartActor's doc comment.
 func newFixture(t *testing.T) (*rooms.Service, *users.Service, pgx.Tx) {
 	t.Helper()
 	tx := pgtest.DB(t)
-	return rooms.NewService(tx), users.NewService(tx), tx
+	matchesSvc := matches.NewService(tx, nil, context.Background(), nil)
+	return rooms.NewService(tx, matchesSvc), users.NewService(tx), tx
 }
 
 func newUser(t *testing.T, svc *users.Service) users.User {

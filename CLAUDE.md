@@ -67,20 +67,31 @@ public — confirm `.env` is untracked before pushing. See MEMORY.md §25a.
 
 ## Current state
 
-**Phases 0-5 complete.** Players can sign up, sign in, view/edit their profile, create/browse/join
-rooms with ready states, and open an authenticated, versioned, bounded WebSocket at `/ws`.
-`internal/realtime` (L6) owns the gateway; `platform/websocket` owns the transport;
-`game/protocol` owns the envelope. No `internal/lobby` package exists yet (PLAN.md Phase 4 explains
-why). 142 Go tests and 54 Angular tests pass.
+**Phases 0-6 complete.** Players can sign up, sign in, view/edit their profile, create/browse/join
+rooms with ready states, open an authenticated WebSocket at `/ws`, and a full, ready room can start
+— `rooms.Service.Start` creates a match and closes the room in one transaction, then
+`internal/matches`' one-goroutine-per-match actor takes it from Waiting through Starting to
+InProgress on its own, assigns the first turn, and advances it on a shot-timer timeout. `GET
+/api/v1/matches/:id` and `GET /api/v1/users/:id/matches` expose it. `internal/realtime` (L6) owns
+the WebSocket gateway; `platform/websocket` owns the transport; `game/protocol` owns the envelope,
+now including `match.starting`/`match.started`/`turn.started`/`match.ended` — defined, but nothing
+sends them over a live connection yet (no per-connection registry exists; that lands with Phase 9's
+shot flow). No `internal/lobby` package exists yet (PLAN.md Phase 4 explains why). 157 Go tests and
+54 Angular tests pass.
 
-**Phase 6 (match lifecycle) is next.** No gameplay message type exists on the wire yet — every
-envelope type reaching the router today is "unknown" by design; Phase 6 starts changing that.
+**Phase 7 (physics prototype) is next.** Still no balls: `game/physics`, `game/state`, and
+`game/simulation` do not exist yet. Turn advance in `internal/matches` is a deliberate, mechanical
+placeholder (round-robin on timeout) — MEMORY.md §13 explains why it is not `game/rules` yet and
+what moves there once fouls exist to decide continuation (Phase 9/11).
 
 Integration tests need a database: `make test-db` once, then `make test-integration`. Without
 `TEST_DATABASE_URL` they skip, which is why `make check` alone can look deceptively small.
+Migrations against the **dev** database are not automatic — `make up` does not run them; run `make
+migrate-up` after pulling a change that adds one.
 
-Before touching realtime code, read MEMORY.md §5 (layer table — note `realtime` and `rooms` may
-import `auth` directly, `users` may not) and §21a, which now holds five hard-won gotchas: Gin
-middleware chaining, `now()` vs `clock_timestamp()`, a `UNIQUE` index outperforming a row lock,
-`Close` racing the write pump (use `CloseAfterDrain` to order a send before a close), and why a
-graceful close can itself stall under extreme backlog without that meaning the policy failed.
+Before touching realtime or match code, read MEMORY.md §5 (layer table — note `matches` is L3,
+below `rooms`' L4, and cannot import it; `realtime` and `rooms` may import `auth` directly, `users`
+may not) and §21a, which now holds five hard-won gotchas: Gin middleware chaining, `now()` vs
+`clock_timestamp()`, a `UNIQUE` index outperforming a row lock, `Close` racing the write pump (use
+`CloseAfterDrain` to order a send before a close), and why a graceful close can itself stall under
+extreme backlog without that meaning the policy failed.
