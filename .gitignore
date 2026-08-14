@@ -1,0 +1,28 @@
+# Environment — never commit real config
+.env
+.env.*
+!.env.example
+
+# Go
+/bin/
+*.test
+*.out
+*.prof
+
+# Node / Angular
+node_modules/
+/apps/web/.angular/
+/apps/web/dist/
+/apps/web/coverage/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Traefik runtime state (contains issued certificates)
+/infra/traefik/acme.json

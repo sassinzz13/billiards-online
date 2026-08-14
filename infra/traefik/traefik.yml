@@ -1,0 +1,63 @@
+# Traefik static configuration.
+#
+# Routing itself is dynamic and comes from container labels in docker-compose.yml, so a service's
+# routes live next to the service that owns them.
+#
+# WebSocket upgrades need no configuration here. Traefik proxies them natively, which is a large
+# part of why it was chosen (§45).
+
+entryPoints:
+  web:
+    address: ":80"
+    # Enabled by the production overlay only. In development everything stays on plain HTTP,
+    # because *.localhost cannot get a real certificate.
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+  websecure:
+    address: ":443"
+  # Dashboard and API. Once entryPoints are declared explicitly, Traefik no longer synthesises the
+  # default "traefik" entrypoint that --api.insecure would otherwise use, so it must be named here.
+  # Published to loopback only in development, and absent entirely from the production overlay.
+  traefik:
+    address: ":8080"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    # Services must opt in with `traefik.enable=true`. Without this, every container in the project
+    # gets a route, including PostgreSQL.
+    exposedByDefault: false
+    network: billiards
+
+api:
+  dashboard: true
+  # Development only: serves the dashboard and API unauthenticated on the `traefik` entrypoint,
+  # which docker-compose.yml publishes to loopback. The production overlay replaces this file's
+  # command entirely and never enables it.
+  insecure: true
+
+# Backs the container healthcheck (`traefik healthcheck --ping`). Without this the ping endpoint
+# does not exist and the container reports unhealthy forever.
+ping: {}
+
+log:
+  level: INFO
+
+accessLog:
+  filters:
+    statusCodes:
+      - "400-599"
+
+# Production TLS. Enabled by infra/traefik/traefik.prod.yml, which replaces this file in the
+# production overlay — see docker-compose.prod.yml.
+#
+# certificatesResolvers:
+#   letsencrypt:
+#     acme:
+#       email: you@example.com
+#       storage: /acme/acme.json
+#       httpChallenge:
+#         entryPoint: web

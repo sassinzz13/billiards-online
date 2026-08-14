@@ -1,0 +1,200 @@
+// Command server is the billiards API and realtime gateway.
+//
+// This file is the composition root: the only place where configuration, infrastructure, and
+// features are wired together. Features never construct each other's dependencies — they receive
+// them here. Keeping construction in one place is what lets the layer rules in MEMORY.md §5 hold,
+// and it makes the whole dependency graph readable in a single file.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/sassinzz13/billiards-online/platform/config"
+	"github.com/sassinzz13/billiards-online/platform/logging"
+	"github.com/sassinzz13/billiards-online/platform/postgres"
+)
+
+func main() {
+	// The container HEALTHCHECK re-executes this binary because the image is FROM scratch and has
+	// no shell to run curl in. See healthcheck.go.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(runHealthcheck())
+	}
+
+	if err := run(); err != nil {
+		// The logger may not exist yet if configuration failed, so report to stderr directly.
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// Configuration is validated before anything else starts. A misconfigured process must fail
+	// here, loudly, rather than half-start and fail at the first request.
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	logger := logging.New(os.Stdout, cfg.Log.Level, cfg.Log.Format)
+	slog.SetDefault(logger)
+
+	// Signal handling is installed before any resource is acquired, so a Ctrl-C during startup is
+	// honoured rather than ignored until the server is fully up.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	logger.Info("starting server",
+		"env", cfg.Env,
+		"addr", cfg.HTTP.Addr,
+		"internalAddr", cfg.HTTP.InternalAddr,
+	)
+
+	pool, err := postgres.Connect(ctx, cfg.Database)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+	logger.Info("database connected", "maxConns", cfg.Database.MaxConns)
+
+	public := &http.Server{
+		Handler:           newRouter(cfg, logger, pool),
+		Addr:              cfg.HTTP.Addr,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No WriteTimeout: it would cap WebSocket connection lifetime once Phase 5 lands.
+		// Per-request deadlines are enforced by context instead.
+	}
+
+	// pprof lives on a separate listener so it is never routed publicly. Traefik only ever sees
+	// the public one. See §47 and the HTTP_INTERNAL_ADDR check in platform/config.
+	internal := &http.Server{
+		Handler:           newInternalRouter(),
+		Addr:              cfg.HTTP.InternalAddr,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	errc := make(chan error, 2)
+	go serve(public, "public", logger, errc)
+	go serve(internal, "internal", logger, errc)
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
+	}
+
+	return shutdown(public, internal, cfg.HTTP.ShutdownTimeout, logger)
+}
+
+func serve(srv *http.Server, name string, logger *slog.Logger, errc chan<- error) {
+	logger.Info("listening", "listener", name, "addr", srv.Addr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		errc <- fmt.Errorf("%s listener: %w", name, err)
+	}
+}
+
+// shutdown stops both listeners gracefully within a single shared budget.
+//
+// Both are given the same deadline rather than a sequential timeout each, so a slow public listener
+// cannot make total shutdown take twice as long as configured. Exceeding the budget drops in-flight
+// requests, which is preferable to a deploy that hangs indefinitely.
+//
+// From Phase 6 this is also where match actors are stopped, so a deploy never corrupts an
+// in-progress match. See §62.
+func shutdown(public, internal *http.Server, timeout time.Duration, logger *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	done := make(chan error, 2)
+	go func() { done <- public.Shutdown(ctx) }()
+	go func() { done <- internal.Shutdown(ctx) }()
+
+	var errs []error
+	for range 2 {
+		if err := <-done; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		logger.Error("graceful shutdown incomplete", "error", err, "timeout", timeout)
+		return fmt.Errorf("shutdown: %w", err)
+	}
+
+	logger.Info("shutdown complete")
+	return nil
+}
+
+// newRouter builds the public HTTP surface.
+//
+// Routes are grouped under /api/v1 so versioning can be introduced without moving anything (§52).
+// As features land, each registers its own routes here — auth in Phase 2, users in Phase 3, and so
+// on — keeping route ownership with the feature that implements them.
+func newRouter(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) http.Handler {
+	if cfg.Env.IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// gin.New rather than gin.Default: Default installs Gin's own text logger, which would bypass
+	// the structured logging every other line in this system uses.
+	r := gin.New()
+	r.Use(
+		requestID(),
+		requestLogger(logger),
+		recovery(logger),
+		secureHeaders(),
+	)
+
+	// Liveness: is the process up? Deliberately checks nothing else, so a database outage does not
+	// cause the orchestrator to kill an otherwise healthy process.
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	// Readiness: should this instance receive traffic? A failing dependency means no.
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := postgres.Health(ctx, pool); err != nil {
+			// The detail goes to the log, not to the response: a readiness probe must not leak
+			// infrastructure state to whoever can reach it (§42).
+			logging.Logger(c.Request.Context()).Error("readiness check failed", "error", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "unavailable",
+				"checks": gin.H{"database": "down"},
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ready",
+			"checks": gin.H{"database": "up"},
+		})
+	})
+
+	v1 := r.Group("/api/v1")
+	v1.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": 1})
+	})
+
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"code":    "not_found",
+			"message": "The requested resource does not exist.",
+		}})
+	})
+
+	return r
+}

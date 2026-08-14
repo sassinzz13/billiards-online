@@ -1,0 +1,74 @@
+# Production overlay. Applied on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# It changes three things and nothing else: TLS is terminated by Traefik, debug surfaces are
+# closed, and nothing is published to the host except 80 and 443.
+#
+# Before first use:
+#   1. Point PUBLIC_HOST at the real domain and HTTP_ALLOWED_ORIGINS at its https:// form.
+#   2. Set ACME_EMAIL.
+#   3. touch infra/traefik/acme.json && chmod 600 infra/traefik/acme.json
+#   4. Set APP_ENV=production — the server then refuses to start with a plaintext origin.
+
+services:
+  traefik:
+    command:
+      # No --api.insecure. The dashboard is not served.
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Every plaintext request is redirected, so the app is only ever reachable over TLS.
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.network=billiards
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --accesslog=true
+      - --accesslog.filters.statuscodes=400-599
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Issued certificates. Must exist and be chmod 600 before first start.
+      - ./infra/traefik/acme.json:/acme/acme.json
+
+  postgres:
+    # Not published. The database is reachable only from the compose network.
+    ports: !override []
+
+  server:
+    # pprof stays bound inside the container and is not published.
+    ports: !override []
+    environment:
+      APP_ENV: production
+      LOG_FORMAT: json
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`${PUBLIC_HOST}`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls=true
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.routers.api.priority=10
+      - traefik.http.routers.api.middlewares=hsts@docker
+      - traefik.http.services.api.loadbalancer.server.port=8080
+      # HSTS is set here rather than in the application, because Traefik terminates TLS and is
+      # therefore the only component that knows the connection was actually secure.
+      - traefik.http.middlewares.hsts.headers.stsSeconds=31536000
+      - traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true
+
+  web:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`${PUBLIC_HOST}`)
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls=true
+      - traefik.http.routers.web.tls.certresolver=letsencrypt
+      - traefik.http.routers.web.priority=1
+      - traefik.http.routers.web.middlewares=hsts@docker
+      - traefik.http.services.web.loadbalancer.server.port=80
